@@ -7,3 +7,4 @@ edition = "2024"
 cortex-m = "0.7.9"
 cortex-m-rt = "0.7.6"
 panic-halt = "1.0.0"
+stm32f3 = { version = "0.15", features = ["stm32f303", "rt"] }

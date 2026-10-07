@@ -11,6 +11,8 @@ use embassy_stm32::{
     interrupt,
     mode::Async,
     peripherals,
+    spi::{self, Spi},
+    time::Hertz,
     usart::{Config, UartTx},
 };
 
@@ -26,6 +28,8 @@ bind_interrupts!(
         I2C1_ER => i2c::ErrorInterruptHandler<peripherals::I2C1>;
         DMA1_CHANNEL6 => dma::InterruptHandler<peripherals::DMA1_CH6>;
         DMA1_CHANNEL7 => dma::InterruptHandler<peripherals::DMA1_CH7>;
+        DMA1_CHANNEL2 => dma::InterruptHandler<peripherals::DMA1_CH2>;
+        DMA1_CHANNEL3 => dma::InterruptHandler<peripherals::DMA1_CH3>;
 });
 
 const DELAY_MS: [u64; 3] = [500, 200, 50];
@@ -33,6 +37,9 @@ const ACCEL_ADDR: u8 = 0x19;
 const MAG_ADDR: u8 = 0x1E;
 const WHO_AM_I_A: u8 = 0x0F;
 const WHO_AM_I_M: u8 = 0x4F;
+const GYRO_WHO_AM_I: u8 = 0x0F;
+const SPI_READ: u8 = 0x80;
+
 static BLINK_DELAY: Signal<CriticalSectionRawMutex, u64> = Signal::new();
 
 #[embassy_executor::task]
@@ -89,6 +96,20 @@ async fn sensor_task(mut i2c: I2c<'static, Async, Master>) {
     }
 }
 
+#[embassy_executor::task]
+async fn gyro_task(mut spi: Spi<'static, Async, spi::mode::Master>, mut cs: Output<'static>) {
+    let mut buf = [GYRO_WHO_AM_I | SPI_READ, 0x00];
+
+    cs.set_low();
+    let result = spi.transfer_in_place(&mut buf).await;
+    cs.set_high();
+
+    match result {
+        Ok(()) => info!("gyro WHO_AM_I = {=u8:#x}", buf[1]),
+        Err(e) => error!("gyro read failed: {}", e),
+    }
+}
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(Default::default());
@@ -112,8 +133,19 @@ async fn main(spawner: Spawner) {
         i2c::Config::default(),
     );
 
+    // SPI
+    let mut spi_config = spi::Config::default();
+    spi_config.mode = spi::MODE_3;
+    spi_config.frequency = Hertz(1_000_000);
+    let spi = Spi::new(
+        p.SPI1, p.PA5, p.PA7, p.PA6, p.DMA1_CH3, p.DMA1_CH2, Irqs, spi_config,
+    );
+
+    let cs = Output::new(p.PE3, Level::High, Speed::Low);
+
     spawner.spawn(uart_task(tx).unwrap());
     spawner.spawn(button_task(button).unwrap());
     spawner.spawn(led_task(led).unwrap());
     spawner.spawn(sensor_task(i2c).unwrap());
+    spawner.spawn(gyro_task(spi, cs).unwrap());
 }

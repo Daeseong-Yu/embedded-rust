@@ -13,6 +13,8 @@ embassy-stm32 = { version = "0.6.0", features = ["stm32f303vc", "defmt", "time-d
 embassy-sync = "0.8.0"
 embassy-time = { version = "0.5.1", features = ["defmt"] }
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
+embedded-hal-async = "1.0.0"
+embedded-hal-bus = { version = "0.3.0", features = ["async", "defmt-03"] }
 
 [profile.dev]
 opt-level = 1

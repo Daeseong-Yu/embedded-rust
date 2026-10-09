@@ -20,6 +20,11 @@ use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal}
 use embassy_time::Timer;
 use {defmt_rtt as _, panic_probe as _};
 
+mod drivers;
+use drivers::{i3g4250d::I3g4250d, lsm303agr::Lsm303agr};
+use embedded_hal_bus::spi::{ExclusiveDevice, NoDelay};
+type GyroSpi = ExclusiveDevice<Spi<'static, Async, spi::mode::Master>, Output<'static>, NoDelay>;
+
 bind_interrupts!(
     struct Irqs {
         EXTI0 => exti::InterruptHandler<interrupt::typelevel::EXTI0>;
@@ -33,12 +38,6 @@ bind_interrupts!(
 });
 
 const DELAY_MS: [u64; 3] = [500, 200, 50];
-const ACCEL_ADDR: u8 = 0x19;
-const MAG_ADDR: u8 = 0x1E;
-const WHO_AM_I_A: u8 = 0x0F;
-const WHO_AM_I_M: u8 = 0x4F;
-const GYRO_WHO_AM_I: u8 = 0x0F;
-const SPI_READ: u8 = 0x80;
 
 static BLINK_DELAY: Signal<CriticalSectionRawMutex, u64> = Signal::new();
 
@@ -82,31 +81,46 @@ async fn uart_task(mut tx: UartTx<'static, Async>) {
 }
 
 #[embassy_executor::task]
-async fn sensor_task(mut i2c: I2c<'static, Async, Master>) {
-    let mut id = [0u8; 1];
+async fn sensor_task(i2c: I2c<'static, Async, Master>) {
+    let mut sensor = match Lsm303agr::new(i2c).await {
+        Ok(sensor) => sensor,
+        Err(e) => {
+            error!("lsm303agr init failed: {}", e);
+            return;
+        }
+    };
 
-    match i2c.write_read(ACCEL_ADDR, &[WHO_AM_I_A], &mut id).await {
-        Ok(()) => info!("accel WHO_AM_I = {=u8:#x}", id[0]),
-        Err(e) => error!("accel read failed: {}", e),
-    }
+    loop {
+        match sensor.read_accel().await {
+            Ok(a) => info!("accel: x={} y={} z={}", a.x, a.y, a.z),
+            Err(e) => error!("accel read failed: {}", e),
+        }
 
-    match i2c.write_read(MAG_ADDR, &[WHO_AM_I_M], &mut id).await {
-        Ok(()) => info!("mag WHO_AM_I = {=u8:#x}", id[0]),
-        Err(e) => error!("mag read failed: {}", e),
+        match sensor.read_mag().await {
+            Ok(m) => info!("mag: x={} y={} z={} mgauss", m.x, m.y, m.z),
+            Err(e) => error!("mag read failed: {}", e),
+        }
+        Timer::after_millis(100).await;
     }
 }
 
 #[embassy_executor::task]
-async fn gyro_task(mut spi: Spi<'static, Async, spi::mode::Master>, mut cs: Output<'static>) {
-    let mut buf = [GYRO_WHO_AM_I | SPI_READ, 0x00];
+async fn gyro_task(spi: GyroSpi) {
+    let mut gyro = match I3g4250d::new(spi).await {
+        Ok(gyro) => gyro,
+        Err(e) => {
+            error!("i3g4250d init failed: {}", e);
+            return;
+        }
+    };
 
-    cs.set_low();
-    let result = spi.transfer_in_place(&mut buf).await;
-    cs.set_high();
+    loop {
+        match gyro.read().await {
+            Ok(g) => info!("gyro: x={}, y={}, z={} mdps", g.x, g.y, g.z),
+            Err(e) => error!("gyro read failed: {}", e),
+        }
 
-    match result {
-        Ok(()) => info!("gyro WHO_AM_I = {=u8:#x}", buf[1]),
-        Err(e) => error!("gyro read failed: {}", e),
+        Timer::after_millis(100).await;
     }
 }
 
@@ -147,5 +161,6 @@ async fn main(spawner: Spawner) {
     spawner.spawn(button_task(button).unwrap());
     spawner.spawn(led_task(led).unwrap());
     spawner.spawn(sensor_task(i2c).unwrap());
-    spawner.spawn(gyro_task(spi, cs).unwrap());
+    let gyro_spi = ExclusiveDevice::new_no_delay(spi, cs).unwrap();
+    spawner.spawn(gyro_task(gyro_spi).unwrap());
 }

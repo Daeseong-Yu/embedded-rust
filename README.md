@@ -75,28 +75,32 @@ Requirements:
 Connect the board through its ST-LINK USB port, then:
 
 ```sh
+cd firmware
 cargo run --release
 ```
 
 This builds the firmware, flashes it, and prints the defmt logs:
 
 ```text
-[INFO ] start (embedded_rust embedded-rust/src/main.rs:56)
-[INFO ] button pressed (embedded_rust embedded-rust/src/main.rs:47)
-[INFO ] blink delay changed: 200 ms (embedded_rust embedded-rust/src/main.rs:32)
-[INFO ] button pressed (embedded_rust embedded-rust/src/main.rs:47)
-[INFO ] blink delay changed: 50 ms (embedded_rust embedded-rust/src/main.rs:32)
+[INFO ] start, protocol v1 (firmware firmware/src/main.rs:130)
+[INFO ] gyro: x=-577, y=201, z=-402 mdps (firmware firmware/src/main.rs:119)
+[INFO ] uart: sent (firmware firmware/src/main.rs:76)
+[INFO ] accel: x=3 y=-26 z=1025 (firmware firmware/src/main.rs:95)
+[INFO ] mag: x=-157 y=304 z=82 mgauss (firmware firmware/src/main.rs:100)
+[INFO ] gyro: x=-385, y=201, z=-183 mdps (firmware firmware/src/main.rs:119)
 ```
 
 To build without a board attached:
 
 ```sh
+cd firmware
 cargo build --release
 ```
 
 The checks that CI runs can be run locally:
 
 ```sh
+cd frimware
 cargo fmt --check
 cargo clippy --release -- -D warnings
 ```

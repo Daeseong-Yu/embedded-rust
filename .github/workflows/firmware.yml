@@ -24,13 +24,18 @@ jobs:
             - name: Format
               run: cargo fmt --check
 
+            - name: Test protocol
+              run: cargo test -p protocol
+
             - name: Clippy
+              working-directory: firmware
               run: cargo clippy --release -- -D warnings
 
             - name: Build
+              working-directory: firmware
               run: cargo build --release
 
             - uses: actions/upload-artifact@v7
               with:
                 name: firmware-elf
-                path: target/thumbv7em-none-eabihf/release/embedded-rust
+                path: target/thumbv7em-none-eabihf/release/firmware

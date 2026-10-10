@@ -127,7 +127,7 @@ async fn gyro_task(spi: GyroSpi) {
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(Default::default());
-    info!("start");
+    info!("start, protocol v{}", protocol::VERSION);
 
     let led = Output::new(p.PE9, Level::Low, Speed::Low);
     let button = ExtiInput::new(p.PA0, p.EXTI0, Pull::Down, Irqs);

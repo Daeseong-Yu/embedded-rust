@@ -16,9 +16,15 @@ use embassy_stm32::{
     usart::{Config, UartTx},
 };
 
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 use embassy_time::Timer;
 use {defmt_rtt as _, panic_probe as _};
+
+use core::sync::atomic::{AtomicU32, Ordering};
+use embassy_sync::{
+    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
+};
+
+use protocol::{Frame, MAX_FRAME_LEN, Message};
 
 mod drivers;
 use drivers::{i3g4250d::I3g4250d, lsm303agr::Lsm303agr};
@@ -40,6 +46,18 @@ bind_interrupts!(
 const DELAY_MS: [u64; 3] = [500, 200, 50];
 
 static BLINK_DELAY: Signal<CriticalSectionRawMutex, u64> = Signal::new();
+/// Samples waiting to be framed and sent over UART.
+static TELEMETRY: Channel<CriticalSectionRawMutex, Message, 16> = Channel::new();
+/// Samples dropped because `TELEMETRY` was full.
+static DROPPED: AtomicU32 = AtomicU32::new(0);
+
+/// Queue a sample without waiting. Sampling must keep its period, so a full
+/// queue drops the sample and counts it instead of blocking.
+fn publish(msg: Message) {
+    if TELEMETRY.try_send(msg).is_err() {
+        DROPPED.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 #[embassy_executor::task]
 async fn led_task(mut led: Output<'static>) {
@@ -71,12 +89,33 @@ async fn button_task(mut button: ExtiInput<'static, Async>) {
 
 #[embassy_executor::task]
 async fn uart_task(mut tx: UartTx<'static, Async>) {
+    let mut seq: u16 = 0;
+    let mut buf = [0u8; MAX_FRAME_LEN];
+
     loop {
-        match tx.write(b"hello\r\n").await {
-            Ok(()) => info!("uart: sent"),
-            Err(e) => error!("uart write failed: {}", e),
+        let msg = TELEMETRY.receive().await;
+        let frame = Frame { seq, msg };
+        seq = seq.wrapping_add(1);
+
+        let n = match protocol::encode(&frame, &mut buf) {
+            Ok(n) => n,
+            Err(e) => {
+                error!("encode failed: {}", Debug2Format(&e));
+                continue;
+            }
+        };
+
+        if let Err(e) = tx.write(&buf[..n]).await {
+            error!("uart write failed: {}", e);
         }
-        Timer::after_millis(1000).await;
+
+        if seq.is_multiple_of(100) {
+            info!(
+                "uart: seq={} dropped={}",
+                seq,
+                DROPPED.load(Ordering::Relaxed)
+            );
+        }
     }
 }
 
@@ -92,12 +131,20 @@ async fn sensor_task(i2c: I2c<'static, Async, Master>) {
 
     loop {
         match sensor.read_accel().await {
-            Ok(a) => info!("accel: x={} y={} z={}", a.x, a.y, a.z),
+            Ok(a) => publish(Message::Accel {
+                x: a.x,
+                y: a.y,
+                z: a.z,
+            }),
             Err(e) => error!("accel read failed: {}", e),
         }
 
         match sensor.read_mag().await {
-            Ok(m) => info!("mag: x={} y={} z={} mgauss", m.x, m.y, m.z),
+            Ok(m) => publish(Message::Mag {
+                x: m.x,
+                y: m.y,
+                z: m.z,
+            }),
             Err(e) => error!("mag read failed: {}", e),
         }
         Timer::after_millis(100).await;
@@ -116,7 +163,11 @@ async fn gyro_task(spi: GyroSpi) {
 
     loop {
         match gyro.read().await {
-            Ok(g) => info!("gyro: x={}, y={}, z={} mdps", g.x, g.y, g.z),
+            Ok(g) => publish(Message::Gyro {
+                x: g.x,
+                y: g.y,
+                z: g.z,
+            }),
             Err(e) => error!("gyro read failed: {}", e),
         }
 

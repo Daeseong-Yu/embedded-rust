@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["firmware", "protocol"]
+members = ["firmware", "protocol", "tools/decode"]
 
 [profile.dev]
 opt-level = 1

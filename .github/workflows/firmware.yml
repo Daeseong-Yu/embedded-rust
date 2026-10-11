@@ -24,8 +24,11 @@ jobs:
             - name: Format
               run: cargo fmt --check
 
-            - name: Test protocol
-              run: cargo test -p protocol
+            - name: Test host crates
+              run: cargo test -p protocol -p decode
+
+            - name: Clippy host tool
+              run: cargo clippy -p decode --all-targets -- -D warnings
 
             - name: Clippy
               working-directory: firmware
